@@ -1,0 +1,82 @@
+name: 'Agent Memory Guard Scanner'
+description: 'Scan your AI agent codebase for OWASP ASI06 memory poisoning vulnerabilities'
+author: 'OWASP Agent Memory Guard Project'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  scan-path:
+    description: 'Path to scan for memory poisoning vulnerabilities'
+    required: false
+    default: '.'
+  config-file:
+    description: 'Path to agent-memory-guard configuration file'
+    required: false
+    default: ''
+  severity-threshold:
+    description: 'Minimum severity to report (low, medium, high, critical)'
+    required: false
+    default: 'medium'
+  fail-on-findings:
+    description: 'Fail the workflow if vulnerabilities are found'
+    required: false
+    default: 'true'
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+
+outputs:
+  findings-count:
+    description: 'Number of memory poisoning vulnerabilities found'
+    value: ${{ steps.scan.outputs.findings-count }}
+  report-path:
+    description: 'Path to the detailed scan report'
+    value: ${{ steps.scan.outputs.report-path }}
+  risk-score:
+    description: 'Overall memory security risk score (0-100)'
+    value: ${{ steps.scan.outputs.risk-score }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install agent-memory-guard
+      shell: bash
+      run: |
+        pip install agent-memory-guard>=0.2.0
+
+    - name: Run memory security scan
+      id: scan
+      shell: bash
+      env:
+        SCAN_PATH: ${{ inputs.scan-path }}
+        CONFIG_FILE: ${{ inputs.config-file }}
+        SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+      run: |
+        python ${{ github.action_path }}/scanner.py \
+          --path "$SCAN_PATH" \
+          --severity "$SEVERITY_THRESHOLD" \
+          ${CONFIG_FILE:+--config "$CONFIG_FILE"}
+
+    - name: Upload scan report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: memory-guard-report
+        path: memory-guard-report.json
+
+    - name: Check findings threshold
+      if: inputs.fail-on-findings == 'true'
+      shell: bash
+      run: |
+        FINDINGS=$(cat memory-guard-report.json | python -c "import sys,json; print(json.load(sys.stdin).get('total_findings', 0))")
+        if [ "$FINDINGS" -gt 0 ]; then
+          echo "::error::Found $FINDINGS memory poisoning vulnerabilities. See the scan report for details."
+          exit 1
+        fi
